@@ -6,40 +6,33 @@ const fetchJson = require('./utils/fetchJson');
 const { mapGamesData } = require('./utils/gameMapper');
 const { extractTopGamesByRank } = require('./utils/topGamesExtractor');
 const gamesConfig = require('./config/gamesConfig');
+const errorHandler = require('./middleware/errorHandler');
+const { validateGame, validateSearch } = require('./middleware/validators');
 
 const app = express();
 
 app.use(bodyParser.json());
 app.use(express.static(`${__dirname}/static`));
 
-app.get('/api/games', (req, res) => db.Game.findAll()
+app.get('/api/games', (req, res, next) => db.Game.findAll()
   .then((games) => res.send(games))
-  .catch((err) => {
-    console.log('There was an error querying games', JSON.stringify(err));
-    return res.send(err);
-  }));
+  .catch((err) => next(err)));
 
-app.post('/api/games', (req, res) => {
+app.post('/api/games', validateGame, (req, res, next) => {
   const { publisherId, name, platform, storeId, bundleId, appVersion, isPublished } = req.body;
   return db.Game.create({ publisherId, name, platform, storeId, bundleId, appVersion, isPublished })
     .then((game) => res.send(game))
-    .catch((err) => {
-      console.log('***There was an error creating a game', JSON.stringify(err));
-      return res.status(400).send(err);
-    });
+    .catch((err) => next(err));
 });
 
-app.post('/api/games/search', async (req, res) => {
+app.post('/api/games/search', validateSearch, async (req, res, next) => {
   const { name, platform } = req.body;
 
   if (!name && !platform) {
     console.log('***No search parameters provided***');
     return db.Game.findAll()
       .then((games) => res.send(games))
-      .catch((err) => {
-        console.log('***There was an error searching for games', JSON.stringify(err));
-        return res.status(400).send(err);
-      });
+      .catch((err) => next(err));
   }
 
   const whereClause = {};
@@ -57,44 +50,49 @@ app.post('/api/games/search', async (req, res) => {
 
     if (!searchedGames.length) {
       console.log('***No games found***');
-      return res.status(204).send([]);
+      return res.status(200).send([]);
     }
 
     return res.send(searchedGames);
   } catch (err) {
-    console.log('***There was an error searching for games', JSON.stringify(err));
-    return res.status(400).send(err);
+    return next(err);
   }
 });
 
-app.delete('/api/games/:id', (req, res) => {
-  // eslint-disable-next-line radix
-  const id = parseInt(req.params.id);
-  return db.Game.findByPk(id)
-    .then((game) => game.destroy({ force: true }))
-    .then(() => res.send({ id }))
-    .catch((err) => {
-      console.log('***Error deleting game', JSON.stringify(err));
-      res.status(400).send(err);
-    });
-});
-
-app.put('/api/games/:id', (req, res) => {
+app.delete('/api/games/:id', (req, res, next) => {
   // eslint-disable-next-line radix
   const id = parseInt(req.params.id);
   return db.Game.findByPk(id)
     .then((game) => {
-      const { publisherId, name, platform, storeId, bundleId, appVersion, isPublished } = req.body;
-      return game.update({ publisherId, name, platform, storeId, bundleId, appVersion, isPublished })
-        .then(() => res.send(game))
-        .catch((err) => {
-          console.log('***Error updating game', JSON.stringify(err));
-          res.status(400).send(err);
-        });
-    });
+      if (!game) {
+        const error = new Error('Game not found');
+        error.statusCode = 404;
+        return next(error);
+      }
+      return game.destroy({ force: true });
+    })
+    .then(() => res.send({ id }))
+    .catch((err) => next(err));
 });
 
-app.post('/api/games/populate', async (req, res) => {
+app.put('/api/games/:id', validateGame, (req, res, next) => {
+  // eslint-disable-next-line radix
+  const id = parseInt(req.params.id);
+  return db.Game.findByPk(id)
+    .then((game) => {
+      if (!game) {
+        const error = new Error('Game not found');
+        error.statusCode = 404;
+        return next(error);
+      }
+      const { publisherId, name, platform, storeId, bundleId, appVersion, isPublished } = req.body;
+      return game.update({ publisherId, name, platform, storeId, bundleId, appVersion, isPublished })
+        .then(() => res.send(game));
+    })
+    .catch((err) => next(err));
+});
+
+app.post('/api/games/populate', async (req, res, next) => {
   let transaction;
 
   try {
@@ -118,7 +116,6 @@ app.post('/api/games/populate', async (req, res) => {
       return res.status(400).send({ error: 'No games found in the fetched data' });
     }
 
-
     transaction = await db.sequelize.transaction();
 
     // Use bulkCreate within transaction - duplicates will be created as separate entries
@@ -140,10 +137,11 @@ app.post('/api/games/populate', async (req, res) => {
     if (transaction) {
       await transaction.rollback();
     }
-    console.log('***Error populating games', JSON.stringify(err));
-    return res.status(500).send({ error: err.message });
+    return next(err);
   }
 });
+
+app.use(errorHandler);
 
 app.listen(3000, () => {
   console.log('Server is up on port 3000');
