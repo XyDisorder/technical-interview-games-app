@@ -7,6 +7,7 @@ const { mapGamesData } = require('./utils/gameMapper');
 const { extractTopGamesByRank } = require('./utils/topGamesExtractor');
 const gamesConfig = require('./config/gamesConfig');
 const errorHandler = require('./middleware/errorHandler');
+const { validateGame, validateSearch } = require('./middleware/validators');
 
 const app = express();
 
@@ -17,17 +18,17 @@ app.get('/api/games', (req, res, next) => db.Game.findAll()
   .then((games) => res.send(games))
   .catch((err) => next(err)));
 
-app.post('/api/games', (req, res, next) => {
+app.post('/api/games', validateGame, (req, res, next) => {
   const { publisherId, name, platform, storeId, bundleId, appVersion, isPublished } = req.body;
   return db.Game.create({ publisherId, name, platform, storeId, bundleId, appVersion, isPublished })
     .then((game) => res.send(game))
     .catch((err) => next(err));
 });
 
-app.post('/api/games/search', async (req, res, next) => {
+app.post('/api/games/search', validateSearch, async (req, res, next) => {
   const { name, platform } = req.body;
 
-  if (!name && !platform) {
+  if (!name && (!platform || platform === '' || platform === 'all')) {
     console.log('***No search parameters provided***');
     return db.Game.findAll()
       .then((games) => res.send(games))
@@ -40,7 +41,7 @@ app.post('/api/games/search', async (req, res, next) => {
       [Op.like]: `%${name}%`,
     };
   }
-  if (platform) {
+  if (platform && platform !== '' && platform !== 'all') {
     whereClause.platform = platform;
   }
 
@@ -74,7 +75,7 @@ app.delete('/api/games/:id', (req, res, next) => {
     .catch((err) => next(err));
 });
 
-app.put('/api/games/:id', (req, res, next) => {
+app.put('/api/games/:id', validateGame, (req, res, next) => {
   // eslint-disable-next-line radix
   const id = parseInt(req.params.id);
   return db.Game.findByPk(id)
