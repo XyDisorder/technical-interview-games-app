@@ -25,6 +25,28 @@
       <search-games title="Search Games" @search-games-db="searchGames" :search="search" />
     </div>
   </section>
+  <section class="section section-container" style="padding-top: 10px; padding-bottom: 10px;">
+    <div class="box">
+      <div class="field">
+        <h3 class="subtitle">Database Management</h3>
+        <div class="control">
+          <button 
+            class="button is-info" 
+            :class="{ 'is-loading': isPopulating }"
+            :disabled="isPopulating"
+            @click="populateGames">
+            <span class="icon">
+              <i class="fa fa-download"></i>
+            </span>
+            <span>Populate Top 100 Games</span>
+          </button>
+        </div>
+        <p v-if="populateMessage" class="help" :class="populateMessageType === 'error' ? 'has-text-danger' : 'has-text-success'">
+          {{ populateMessage }}
+        </p>
+      </div>
+    </div>
+  </section>
   <section class="section section-container" style="padding-top: 24px; padding-bottom: 5px;">
     <h2 class="title">Games</h2>
     <game v-for="(game, index) in games"
@@ -213,7 +235,10 @@
     data: {
       games: [],
       search: [],
-      apiURL: 'http://localhost:3000/api/games'
+      apiURL: 'http://localhost:3000/api/games',
+      isPopulating: false,
+      populateMessage: '',
+      populateMessageType: ''
     },
     methods: {
       onAddOrUpdateGame (game) {
@@ -254,6 +279,27 @@
         return axios.post(`${this.apiURL}/search`, search)
           .then((response) => {
             this.games = response.data
+          })
+      },
+      populateGames () {
+        this.isPopulating = true
+        this.populateMessage = ''
+        return axios.post(`${this.apiURL}/populate`)
+          .then((response) => {
+            this.populateMessage = response.data.message || `Successfully populated ${response.data.count} games`
+            this.populateMessageType = 'success'
+            // Refresh the games list
+            return axios.get(this.apiURL)
+              .then((gamesResponse) => {
+                this.games = gamesResponse.data
+              })
+          })
+          .catch((error) => {
+            this.populateMessage = error.response?.data?.error || 'Failed to populate games'
+            this.populateMessageType = 'error'
+          })
+          .finally(() => {
+            this.isPopulating = false
           })
       }
     },

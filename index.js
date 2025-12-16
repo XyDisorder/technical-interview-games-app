@@ -2,6 +2,10 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const { Op } = require('sequelize');
 const db = require('./models');
+const fetchJson = require('./utils/fetchJson');
+const { mapGamesData } = require('./utils/gameMapper');
+const { extractTopGamesByRank } = require('./utils/topGamesExtractor');
+const gamesConfig = require('./config/gamesConfig');
 
 const app = express();
 
@@ -88,6 +92,57 @@ app.put('/api/games/:id', (req, res) => {
           res.status(400).send(err);
         });
     });
+});
+
+app.post('/api/games/populate', async (req, res) => {
+  let transaction;
+
+  try {
+    // Fetch data from both sources in parallel
+    const [iosData, androidData] = await Promise.all([
+      fetchJson(gamesConfig.iosUrl),
+      fetchJson(gamesConfig.androidUrl),
+    ]);
+
+    // Extract top 100 from raw data based on rank field
+    const topIosRawGames = extractTopGamesByRank(iosData, gamesConfig.topAppRank);
+    const topAndroidRawGames = extractTopGamesByRank(androidData, gamesConfig.topAppRank);
+
+    // Map only the top 100 games to database format
+    const iosGames = mapGamesData(topIosRawGames, 'ios');
+    const androidGames = mapGamesData(topAndroidRawGames, 'android');
+
+    const allGames = [...iosGames, ...androidGames];
+
+    if (allGames.length === 0) {
+      return res.status(400).send({ error: 'No games found in the fetched data' });
+    }
+
+
+    transaction = await db.sequelize.transaction();
+
+    // Use bulkCreate within transaction - duplicates will be created as separate entries
+    // In production, you'd want a unique constraint on (storeId, platform)
+    const createdGames = await db.Game.bulkCreate(allGames, {
+      ignoreDuplicates: false,
+      transaction,
+    });
+
+    await transaction.commit();
+
+    return res.send({
+      message: `Successfully populated ${createdGames.length} games ` +
+        `(${iosGames.length} iOS, ${androidGames.length} Android)`,
+      count: createdGames.length,
+    });
+  } catch (err) {
+    // Rollback transaction if it was started
+    if (transaction) {
+      await transaction.rollback();
+    }
+    console.log('***Error populating games', JSON.stringify(err));
+    return res.status(500).send({ error: err.message });
+  }
 });
 
 app.listen(3000, () => {
