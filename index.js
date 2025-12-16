@@ -41,7 +41,7 @@ app.post('/api/games/search', validateSearch, async (req, res, next) => {
       [Op.like]: `%${name}%`,
     };
   }
-  if (platform && platform !== '' && platform !== 'all') {
+  if (platform) {
     whereClause.platform = platform;
   }
 
